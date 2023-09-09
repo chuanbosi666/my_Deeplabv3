@@ -35,10 +35,10 @@ class IntermediateLayerGetter(nn.ModuleDict):
     }
 
     def __init__(self, model: nn.Module, return_layers: Dict[str, str]) -> None:
-        if not set(return_layers).issubset([name for name, _ in model.named_children()]):
+        if not set(return_layers).issubset([name for name, _ in model.named_children()]):  # 判断我们的return_layers是不是在我们的子层中
             raise ValueError("return_layers are not present in model")
-        orig_return_layers = return_layers
-        return_layers = {str(k): str(v) for k, v in return_layers.items()}
+        orig_return_layers = return_layers  # 变元
+        return_layers = {str(k): str(v) for k, v in return_layers.items()}  # 将里面的内容强制转变成字符
 
         # 重新构建backbone，将没有使用到的模块全部删掉
         layers = OrderedDict()
@@ -83,21 +83,21 @@ class DeepLabV3(nn.Module):
         super(DeepLabV3, self).__init__()
         self.backbone = backbone
         self.classifier = classifier
-        self.aux_classifier = aux_classifier
+        self.aux_classifier = aux_classifier  # 对backbone，分类器，辅助分类器
 
     def forward(self, x: Tensor) -> Dict[str, Tensor]:
-        input_shape = x.shape[-2:]
+        input_shape = x.shape[-2:]  # 取出的是图片的尺寸
         # contract: features is a dict of tensors
-        features = self.backbone(x)
+        features = self.backbone(x) # backbone的输出
 
-        result = OrderedDict()
-        x = features["out"]
-        x = self.classifier(x)
+        result = OrderedDict()  # 创建一个有序字典
+        x = features["out"] # 取出backbone的输出
+        x = self.classifier(x) # 使用分类器
         # 使用双线性插值还原回原图尺度
-        x = F.interpolate(x, size=input_shape, mode='bilinear', align_corners=False)
-        result["out"] = x
+        x = F.interpolate(x, size=input_shape, mode='bilinear', align_corners=False)  # 使用双线性插值还原回原图尺度
+        result["out"] = x  # 将结果放入有序字典中
 
-        if self.aux_classifier is not None:
+        if self.aux_classifier is not None:  # 和那个FCN模型差不多，也在layers3的结果进行分类
             x = features["aux"]
             x = self.aux_classifier(x)
             # 使用双线性插值还原回原图尺度
@@ -107,7 +107,7 @@ class DeepLabV3(nn.Module):
         return result
 
 
-class FCNHead(nn.Sequential):
+class FCNHead(nn.Sequential):  # 和之前的FCN头一样，只是多了一个dropout
     def __init__(self, in_channels, channels):
         inter_channels = in_channels // 4
         super(FCNHead, self).__init__(
@@ -119,45 +119,45 @@ class FCNHead(nn.Sequential):
         )
 
 
-class ASPPConv(nn.Sequential):
+class ASPPConv(nn.Sequential):  # ASPP的卷积部分
     def __init__(self, in_channels: int, out_channels: int, dilation: int) -> None:
         super(ASPPConv, self).__init__(
-            nn.Conv2d(in_channels, out_channels, 3, padding=dilation, dilation=dilation, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU()
+            nn.Conv2d(in_channels, out_channels, 3, padding=dilation, dilation=dilation, bias=False), # 这是对应论文中的空洞卷积，输入通道，输出通道，卷积核大小，padding，空洞卷积率，是否有偏置
+            nn.BatchNorm2d(out_channels),  # 进行BN操作
+            nn.ReLU()  # 进行ReLU操作
         )
 
 
 class ASPPPooling(nn.Sequential):
     def __init__(self, in_channels: int, out_channels: int) -> None:
         super(ASPPPooling, self).__init__(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels, out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.AdaptiveAvgPool2d(1),  #这是对应的论文中的全局平均池化
+            nn.Conv2d(in_channels, out_channels, 1, bias=False),  # 对ASPP的结果进行1x1卷积
+            nn.BatchNorm2d(out_channels),  # 对结果进行BN操作
             nn.ReLU()
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        size = x.shape[-2:]
+        size = x.shape[-2:]  # 获取输入的尺寸，480x480
         for mod in self:
-            x = mod(x)
-        return F.interpolate(x, size=size, mode='bilinear', align_corners=False)
+            x = mod(x)  # 对输入进行上面的操作
+        return F.interpolate(x, size=size, mode='bilinear', align_corners=False)  # 使用双线性插值还原回原图尺度
 
 
-class ASPP(nn.Module):
+class ASPP(nn.Module):  # ASPP模块
     def __init__(self, in_channels: int, atrous_rates: List[int], out_channels: int = 256) -> None:
         super(ASPP, self).__init__()
         modules = [
             nn.Sequential(nn.Conv2d(in_channels, out_channels, 1, bias=False),
                           nn.BatchNorm2d(out_channels),
-                          nn.ReLU())
+                          nn.ReLU())  # 对输入进行1x1卷积，BN，ReLU操作
         ]
 
-        rates = tuple(atrous_rates)
-        for rate in rates:
-            modules.append(ASPPConv(in_channels, out_channels, rate))
+        rates = tuple(atrous_rates) # 将空洞卷积率转换成元组的形式
+        for rate in rates:  # 对空洞卷积率进行循环,并且将最后的结果进行拼接
+            modules.append(ASPPConv(in_channels, out_channels, rate))  # 对输入进行空洞卷积，BN，ReLU操作
 
-        modules.append(ASPPPooling(in_channels, out_channels))
+        modules.append(ASPPPooling(in_channels, out_channels))  # 对输入进行全局平均池化，1x1卷积，BN，ReLU操作
 
         self.convs = nn.ModuleList(modules)
 
@@ -179,8 +179,8 @@ class ASPP(nn.Module):
 class DeepLabHead(nn.Sequential):
     def __init__(self, in_channels: int, num_classes: int) -> None:
         super(DeepLabHead, self).__init__(
-            ASPP(in_channels, [12, 24, 36]),
-            nn.Conv2d(256, 256, 3, padding=1, bias=False),
+            ASPP(in_channels, [12, 24, 36]),  # 使用ASPP模块，输入通道，空洞卷积率,空洞率分别为12，24，36
+            nn.Conv2d(256, 256, 3, padding=1, bias=False),  # 对ASPP的结果进行3x3卷积，padding为1
             nn.BatchNorm2d(256),
             nn.ReLU(),
             nn.Conv2d(256, num_classes, 1)
@@ -190,33 +190,33 @@ class DeepLabHead(nn.Sequential):
 def deeplabv3_resnet50(aux, num_classes=21, pretrain_backbone=False):
     # 'resnet50_imagenet': 'https://download.pytorch.org/models/resnet50-0676ba61.pth'
     # 'deeplabv3_resnet50_coco': 'https://download.pytorch.org/models/deeplabv3_resnet50_coco-cd0a2569.pth'
-    backbone = resnet50(replace_stride_with_dilation=[False, True, True])
+    backbone = resnet50(replace_stride_with_dilation=[False, True, True])  # 使用resnet50作为backbone,并对layers3和layers4进行空洞卷积
 
     if pretrain_backbone:
         # 载入resnet50 backbone预训练权重
         backbone.load_state_dict(torch.load("resnet50.pth", map_location='cpu'))
 
-    out_inplanes = 2048
-    aux_inplanes = 1024
+    out_inplanes = 2048  # 这个是主分类器的输入通道
+    aux_inplanes = 1024  # 这个是辅助分类器的输入通道
 
-    return_layers = {'layer4': 'out'}
+    return_layers = {'layer4': 'out'}  # 设置这个字典的作用是为了将backbone的输出进行分离，layer4的输出作为主分类器的输入，layer3的输出作为辅助分类器的输入
     if aux:
         return_layers['layer3'] = 'aux'
-    backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
+    backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)  # 使用IntermediateLayerGetter将backbone的输出进行分离
 
-    aux_classifier = None
+    aux_classifier = None  # 辅助分类器默认不使用
     # why using aux: https://github.com/pytorch/vision/issues/4292
     if aux:
         aux_classifier = FCNHead(aux_inplanes, num_classes)
 
-    classifier = DeepLabHead(out_inplanes, num_classes)
+    classifier = DeepLabHead(out_inplanes, num_classes)  # 主分类器
 
-    model = DeepLabV3(backbone, classifier, aux_classifier)
+    model = DeepLabV3(backbone, classifier, aux_classifier)  # 将backbone，主分类器，辅助分类器组合成一个模型
 
-    return model
+    return model  # 返回模型
 
 
-def deeplabv3_resnet101(aux, num_classes=21, pretrain_backbone=False):
+def deeplabv3_resnet101(aux, num_classes=21, pretrain_backbone=False): # 和上面的resnet50一样，只是backbone换成了resnet101
     # 'resnet101_imagenet': 'https://download.pytorch.org/models/resnet101-63fe2227.pth'
     # 'deeplabv3_resnet101_coco': 'https://download.pytorch.org/models/deeplabv3_resnet101_coco-586e9e4e.pth'
     backbone = resnet101(replace_stride_with_dilation=[False, True, True])
